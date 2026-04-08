@@ -52,11 +52,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 FROM nvidia/cuda:12.5.0-devel-ubuntu22.04 AS app-builder
 WORKDIR /app
 
-# Install Python and dependencies
+# Install Python, git, and dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-venv \
     python3-pip \
+    git \
     software-properties-common \
     && rm -rf /var/lib/apt/lists/* \
     && add-apt-repository ppa:deadsnakes/ppa \
@@ -93,7 +94,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/venv/bin/python -m pip install \
     git+https://github.com/Dao-AILab/flash-attention.git \
     git+https://github.com/thu-ml/SageAttention.git \
-    --no-cache-dir
+    --no-cache-dir \
+    && rm -rf /root/.cache/pip
 
 # =========================
 # Stage 3: Runtime
