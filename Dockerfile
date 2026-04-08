@@ -12,7 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Virtualenv
-RUN python3.11 -m venv /opt/venv
+RUN python3.11 -m venv /opt/venv && \
+    /opt/venv/bin/python -m ensurepip && \
+    /opt/venv/bin/pip install --upgrade pip wheel setuptools
 ENV PATH="/opt/venv/bin:$PATH"
 
 # ---- Speed up pip (critical for rebuild speed)
@@ -58,7 +60,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY --from=wheel-builder /wheels /wheels
 
 # ---- Install heavy deps FIRST (rarely change)
-RUN pip install --no-index --find-links=/wheels /wheels/*
+RUN /opt/venv/bin/pip install --no-index --find-links=/wheels /wheels/*
 
 # ---- Copy app AFTER deps (prevents reinstalling deps on code change)
 COPY --from=wheel-builder /build/ComfyUI /app
