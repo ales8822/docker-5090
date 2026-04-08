@@ -1,9 +1,8 @@
-name: Build and Publish Docker Image
+name: Build and Push to GHCR
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -16,25 +15,8 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: false
-          swap-storage: false
-
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Lowercase Repository Name
-        id: string
-        uses: ASzc/change-string-case-action@v6
-        with:
-          string: ${{ github.repository }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,12 +28,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ steps.string.outputs.lowercase }}:latest
+          # Replace with your actual repo name if needed
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}:latest
+          # Use GHA cache to speed up subsequent builds
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64

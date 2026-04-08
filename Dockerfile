@@ -1,133 +1,44 @@
 # syntax=docker/dockerfile:1
 
-# =========================
-# Stage 1: Wheel Builder
-# =========================
-FROM nvidia/cuda:12.5.0-devel-ubuntu22.04 AS wheel-builder
-WORKDIR /build
+# Inherit from the specific RunPod PyTorch base image
+FROM runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
 
-# Install dependencies including python3.11
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    python3.11 \
-    python3.11-venv \
-    python3-pip \
-    curl \
-    software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
-# Add deadsnakes PPA for python3.11 and its dependencies
-RUN add-apt-repository ppa:deadsnakes/ppa && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    python3.11-distutils \
-    && rm -rf /var/lib/apt/lists/*
-
-# Clone ComfyUI
-ARG COMFYUI_COMMIT=HEAD
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git \
-    && cd ComfyUI \
-    && git checkout $COMFYUI_COMMIT
-
-# Set up temporary Python virtualenv for building
-RUN python3.11 -m venv /tmp/venv \
-    && /tmp/venv/bin/python -m ensurepip \
-    && /tmp/venv/bin/python -m pip install --upgrade pip wheel setuptools
-
-# Build heavy wheels (cached)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    /tmp/venv/bin/python -m pip wheel --wheel-dir=/wheels \
-    torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/cu121
-
-# Download all dependencies
-RUN --mount=type=cache,target=/root/.cache/pip \
-    /tmp/venv/bin/python -m pip download \
-    --dest=/wheels \
-    -r ComfyUI/requirements.txt
-
-# =========================
-# Stage 2: App Builder
-# =========================
-FROM nvidia/cuda:12.5.0-devel-ubuntu22.04 AS app-builder
+# Set up work directory
 WORKDIR /app
 
-# Install Python, git, and dependencies
+# Install build dependencies for custom extensions (Flash/SageAttention)
+# 'libgomp1' is necessary for performance extensions to execute correctly
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3-pip \
+    build-essential \
     git \
-    software-properties-common \
-    && rm -rf /var/lib/apt/lists/* \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends python3.11-distutils \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create clean venv
-RUN python3.11 -m venv /opt/venv \
-    && /opt/venv/bin/python -m ensurepip \
-    && /opt/venv/bin/python -m pip install --upgrade pip
+# Copy ComfyUI requirements first to leverage Docker layer caching
+# You must have a local requirements.txt in your repo root
+COPY requirements.txt .
 
-# Copy wheels from Stage 1
-COPY --from=wheel-builder /wheels /wheels
+# Upgrade pip and install core dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy ComfyUI source from Stage 1
-COPY --from=wheel-builder /build/ComfyUI /app
+# Performance optimization: Force kernel compilation for Blackwell (5090)
+ENV TORCH_CUDA_ARCH_LIST="9.0;10.0+PTX"
+ENV FORCE_CUDA=1
+ENV MAX_JOBS=4
 
-# Install all dependencies using the wheels and resolver
-RUN /opt/venv/bin/python -m pip install \
-    --no-index --find-links=/wheels \
-    -r requirements.txt \
-    && rm -rf /app/.git
-
-# Environment variables for performance tuning
-ENV TORCH_CUDA_ARCH_LIST="10.0+PTX" \
-    CUDA_HOME=/usr/local/cuda \
-    FORCE_CUDA=1 \
-    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-    CUDA_MODULE_LOADING=LAZY \
-    TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1
-
-# Install torch first (before flash-attention)
-RUN /opt/venv/bin/python -m pip install \
-    --no-index --find-links=/wheels \
-    torch torchvision torchaudio \
-    && rm -rf /wheels/*.whl
-
-# Install performance extensions (now torch is installed)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    /opt/venv/bin/python -m pip install \
+# Install performance extensions with no-build-isolation to ensure they 
+# compile against the pre-installed PyTorch in the RunPod image
+RUN pip install --no-build-isolation --no-cache-dir \
     git+https://github.com/Dao-AILab/flash-attention.git \
-    git+https://github.com/thu-ml/SageAttention.git \
-    --no-cache-dir \
-    && rm -rf /root/.cache/pip
+    git+https://github.com/thu-ml/SageAttention.git
 
-# =========================
-# Stage 3: Runtime
-# =========================
-FROM nvidia/cuda:12.5.0-runtime-ubuntu22.04
-WORKDIR /app
+# Copy the rest of the application
+COPY . .
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    software-properties-common \
-    tini \
-    && rm -rf /var/lib/apt/lists/* \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends python3.11-distutils \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy final artifacts
-COPY --from=app-builder /opt/venv /opt/venv
-COPY --from=app-builder /app /app
-
-ENV PATH="/opt/venv/bin:$PATH" \
-    NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
-
+# Ensure standard ComfyUI ports and signals
 EXPOSE 8188
 
+# Entrypoint for clean shutdowns
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/opt/venv/bin/python", "main.py", "--listen", "--port", "8188", "--highvram"]
+CMD ["python", "main.py", "--listen", "--port", "8188", "--highvram"]
