@@ -89,7 +89,13 @@ ENV TORCH_CUDA_ARCH_LIST="10.0+PTX" \
     CUDA_MODULE_LOADING=LAZY \
     TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1
 
-# Install performance extensions
+# Install torch first (before flash-attention)
+RUN /opt/venv/bin/python -m pip install \
+    --no-index --find-links=/wheels \
+    torch torchvision torchaudio \
+    && rm -rf /wheels/*.whl
+
+# Install performance extensions (now torch is installed)
 RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/venv/bin/python -m pip install \
     git+https://github.com/Dao-AILab/flash-attention.git \
