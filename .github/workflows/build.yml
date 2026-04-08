@@ -1,9 +1,9 @@
 name: Build and Publish Docker Image
 
-# This tells GitHub to build the image every time you upload new files
 on:
-  push: 
-    branches:[ "main" ]
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -17,7 +17,6 @@ jobs:
       packages: write
 
     steps:
-      # 1. GitHub's free computers are small. This frees up 30GB of disk space so our massive AI image fits!
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -29,11 +28,19 @@ jobs:
           docker-images: false
           swap-storage: false
 
-      # 2. Checkout your code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 3. Log into GitHub's free Docker registry
+      # 4. Prepare lowercase repository name for the registry
+      - name: Lowercase Repository Name
+        id: string
+        uses: ASzc/change-string-case-action@v6
+        with:
+          string: ${{ github.repository }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
@@ -41,17 +48,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 4. Make sure the repository name is lowercase (Docker requirement)
-      - name: Lowercase Repository Name
-        id: string
-        uses: ASzc/change-string-case-action@v6
-        with:
-          string: ${{ github.repository }}
-
-      # 5. Build the image and push it to GHCR!
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
+          # Using the lowercase name from the previous step
           tags: ${{ env.REGISTRY }}/${{ steps.string.outputs.lowercase }}:latest
+          # Cache layers to make future builds much faster
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
