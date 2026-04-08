@@ -1,0 +1,13 @@
+# Create the file in your repo root
+cat > .dockerignore <<EOF
+.git
+.gitignore
+*.pyc
+__pycache__
+*.log
+*.md
+node_modules
+venv
+.env
+.DS_Store
+EOF
