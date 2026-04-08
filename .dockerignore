@@ -1,5 +1,4 @@
-# Create the file in your repo root
-cat > .dockerignore <<EOF
+
 .git
 .gitignore
 *.pyc
@@ -10,4 +9,4 @@ node_modules
 venv
 .env
 .DS_Store
-EOF
+
