@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11-venv \
     python3-pip \
     curl \
+    software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
 # Add deadsnakes PPA for python3.11 and its dependencies
@@ -56,6 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-venv \
     python3-pip \
+    software-properties-common \
     && rm -rf /var/lib/apt/lists/* \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends python3.11-distutils \
@@ -102,6 +104,7 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
+    software-properties-common \
     tini \
     && rm -rf /var/lib/apt/lists/* \
     && add-apt-repository ppa:deadsnakes/ppa \
