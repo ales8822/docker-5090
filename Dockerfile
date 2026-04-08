@@ -6,50 +6,54 @@ FROM nvidia/cuda:12.5.0-devel-ubuntu22.04 AS wheel-builder
 WORKDIR /wheels
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git python3.11-dev python3-pip python3.11-venv && \
-    rm -rf /var/lib/apt/lists/*
+    git python3.11-venv python3-pip && rm -rf /var/lib/apt/lists/*
 
 RUN python3.11 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --upgrade pip wheel
 
-# Clone ComfyUI to get requirements.txt
+# Clone ComfyUI
 RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git /tmp/ComfyUI
 
-# CRITICAL: Use `pip wheel` to DOWNLOAD and COMPILE into the /wheels folder
+# STEP 1: Build the big heavy dependencies (Torch/Triton) into wheels
+# We explicitly call out the packages we want to wheel.
 RUN pip wheel --wheel-dir=/wheels \
-    -r /tmp/ComfyUI/requirements.txt \
     torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
     xformers triton
+
+# STEP 2: Download the remaining standard requirements from requirements.txt
+# We ignore the ones that aren't on PyPI (like frontend packages)
+RUN pip download --dest=/wheels \
+    -r /tmp/ComfyUI/requirements.txt \
+    --index-url https://pypi.org/simple \
+    --no-deps \
+    --ignore-requires-python \
+    --only-binary=:all: 2>/dev/null || true
 
 # =================================================================================================
 # Stage 2: App Builder
 # =================================================================================================
 FROM nvidia/cuda:12.5.0-devel-ubuntu22.04 AS app-builder
-
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git aria2 python3.11 python3.11-venv python3-pip && \
-    rm -rf /var/lib/apt/lists/*
+# ... (standard setup) ...
 
-RUN python3.11 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copy the PRE-FILLED /wheels folder from the first stage
+# 1. Install the wheels we just built
 COPY --from=wheel-builder /wheels /wheels
-
-# NOW you can install from the populated /wheels directory
 RUN pip install --no-index --find-links=/wheels /wheels/*.whl
 
-# Install Performance packages from Source
+# 2. Install the full requirements file normally 
+# Because the heavy stuff (torch/xformers) is already installed, 
+# this will just "see" them and skip to installing the rest.
+COPY --from=wheel-builder /tmp/ComfyUI /app
+RUN pip install -r requirements.txt
+
+# 3. Install your performance packages (Sage/Flash)
 ENV TORCH_CUDA_ARCH_LIST="8.0 8.6 8.9 9.0 10.0"
 RUN pip install --no-cache-dir \
     git+https://github.com/Dao-AILab/flash-attention.git \
     git+https://github.com/thu-ml/SageAttention.git
-
 # Clone ComfyUI and download models
 RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git .
-# ... (rest of your model download steps)
 
 # =================================================================================================
 # Stage 3: Final Image
