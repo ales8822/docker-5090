@@ -31,13 +31,15 @@ RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git /tmp/Comfy
 
 # This is the key command. `pip wheel` downloads and builds all packages and their
 # dependencies into .whl files in the current directory (`/wheels`).
-RUN pip wheel --wheel-dir=. \
-    -r /tmp/ComfyUI/requirements.txt \
-    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
-    xformers \
-    triton \
-    sage_attn \
-    flash-attn
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r /tmp/ComfyUI/requirements.txt \
+    torch torchvision torchaudio xformers triton
+
+# 2. Install performance packages directly from GitHub
+# We set this env var to speed up FlashAttention build
+ENV FLASH_ATTENTION_FORCE_BUILD=TRUE
+RUN pip install --no-cache-dir \
+    git+https://github.com/Dao-AILab/flash-attention.git \
+    git+https://github.com/thu-ml/SageAttention.git
 
 # =================================================================================================
 # Stage 2: App Builder - The Assembly Line
