@@ -18,6 +18,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # --- THE MAGIC STEP ---
+      # This deletes massive unused software to free up SSD space, 
+      # then creates a 16GB Virtual RAM (Swap) file so the build doesn't crash.
+      - name: Free Disk Space & Create Swap Space
+        run: |
+          echo "Freeing up disk space..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          
+          echo "Creating 16GB swap file..."
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          
+          echo "=== Memory and Swap Status ==="
+          free -h
+          echo "=== Disk Space Status ==="
+          df -h
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -33,7 +55,6 @@ jobs:
         with:
           context: .
           push: true
-          # Replace with your actual repo name if needed
           tags: ${{ env.REGISTRY }}/${{ github.repository }}:latest
           # Use GHA cache to speed up subsequent builds
           cache-from: type=gha
