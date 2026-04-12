@@ -15,9 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 2. Clone ComfyUI directly into the working directory
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git .
 
-# 3. Install core dependencies, build tools, and SageAttention prerequisites
-# (Added accelerate, diffusers, and transformers requirements based on the guide)
+# 3. Install core dependencies, downgrade to stable PyTorch 2.6.0, and install build tools
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126 && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir ninja packaging wheel triton \
     "accelerate>=1.1.1" "diffusers>=0.31.0" "transformers>=4.39.3"
