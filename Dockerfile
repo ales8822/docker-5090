@@ -30,4 +30,4 @@ RUN pip install --no-cache-dir https://huggingface.co/Kijai/PrecompiledWheels/re
 EXPOSE 8188
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD["python", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--highvram"]
+CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--highvram"]
