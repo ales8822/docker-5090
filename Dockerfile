@@ -4,7 +4,7 @@ FROM runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
 
 WORKDIR /app
 
-# 1. Install system dependencies (Added ffmpeg & cv2 libs strictly required by custom nodes)
+# 1. Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
@@ -15,14 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Clone ComfyUI directly into the working directory
+# 2. Clone ComfyUI
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git .
 
-# 3. Install core dependencies
+# 3. Install core dependencies & THE "NIGHTMARE" LIBRARIES
+# Added Cython, insightface, onnxruntime-gpu, and bitsandbytes
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir Cython && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir ninja packaging wheel triton \
-    "accelerate>=1.1.1" "diffusers>=0.31.0" "transformers>=4.39.3"
+    "accelerate>=1.1.1" "diffusers>=0.31.0" "transformers>=4.39.3" \
+    insightface onnxruntime-gpu bitsandbytes
 
 # 4. Install Performance Extensions (Flash Attention & Sage Attention)
 RUN pip install --no-cache-dir https://huggingface.co/strangertoolshf/flash_attention_2_wheelhouse/resolve/main/wheelhouse-flash_attn-2.8.3/linux_x86_64/torch2.8/cu12/abiFALSE/cp312/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
@@ -36,7 +39,11 @@ RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
     git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git && \
     git clone https://github.com/rgthree/rgthree-comfy.git && \
     git clone https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git && \
-    git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
+    git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git && \
+    git clone https://github.com/cubiq/ComfyUI_IPAdapter_plus.git && \
+    git clone https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git && \
+    git clone https://github.com/city96/ComfyUI-GGUF.git && \
+    git clone https://github.com/11cafe/comfyui-workspace-manager.git
 
 # 6. Automatically install all Python dependencies for the downloaded nodes
 RUN for dir in /app/custom_nodes/*/ ; do \
