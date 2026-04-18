@@ -18,20 +18,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 2. Clone ComfyUI
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git .
 
-# 3. Install core dependencies & THE "NIGHTMARE" LIBRARIES
-# Added Cython, insightface, onnxruntime-gpu, and bitsandbytes
+# 3. Install core dependencies, HuggingFace Transfer, and GRADIO for the sidecar
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir Cython && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir ninja packaging wheel triton \
+    pip install --no-cache-dir ninja packaging wheel triton gradio requests \
     "accelerate>=1.1.1" "diffusers>=0.31.0" "transformers>=4.39.3" \
-    insightface onnxruntime-gpu bitsandbytes
+    insightface onnxruntime-gpu bitsandbytes huggingface_hub[hf_transfer]
 
-# 4. Install Performance Extensions (Flash Attention & Sage Attention)
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+
+# 4. Install Performance Extensions
 RUN pip install --no-cache-dir https://huggingface.co/strangertoolshf/flash_attention_2_wheelhouse/resolve/main/wheelhouse-flash_attn-2.8.3/linux_x86_64/torch2.8/cu12/abiFALSE/cp312/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
 RUN pip install --no-cache-dir https://huggingface.co/Kijai/PrecompiledWheels/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
 
-# 5. Clone ComfyUI Manager and the Most Popular Custom Nodes
+# 5. Clone Custom Nodes
 WORKDIR /app/custom_nodes
 RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
     git clone https://github.com/civitai/civitai_comfy_nodes.git && \
@@ -45,17 +46,24 @@ RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
     git clone https://github.com/city96/ComfyUI-GGUF.git && \
     git clone https://github.com/11cafe/comfyui-workspace-manager.git
 
-# 6. Automatically install all Python dependencies for the downloaded nodes
+# 6. Auto-install Custom Node Requirements
 RUN for dir in /app/custom_nodes/*/ ; do \
         if [ -f "$dir/requirements.txt" ]; then \
             pip install --no-cache-dir -r "$dir/requirements.txt"; \
         fi; \
     done
 
-# 7. Reset working directory back to ComfyUI root
+# 7. Reset directory and copy our new Sidecar files into the Docker Image
 WORKDIR /app
+COPY sidecar.py /app/sidecar.py
+COPY start.sh /app/start.sh
 
-EXPOSE 8188
+# Make sure the script is allowed to execute
+RUN chmod +x /app/start.sh
+
+# 8. Expose BOTH ports so RunPod can see them
+EXPOSE 8188 8080
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--highvram"]
+# 9. Change the final command to run our dual-app launcher script!
+CMD ["/app/start.sh"]
