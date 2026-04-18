@@ -4,7 +4,7 @@ FROM runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
 
 WORKDIR /app
 
-# 1. Install system dependencies
+# 1. Install system dependencies (Added python3-venv for isolated app bubbles)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
@@ -13,6 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgl1 \
     libglib2.0-0 \
+    aria2 \
+    curl \
+    python3-venv \
+    && curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
+    && dpkg -i cloudflared.deb \
+    && rm cloudflared.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Clone ComfyUI
@@ -53,17 +59,28 @@ RUN for dir in /app/custom_nodes/*/ ; do \
         fi; \
     done
 
-# 7. Reset directory and copy our new Sidecar files into the Docker Image
+# 8. Install Ollama Core Binary
+RUN curl -fsSL https://ollama.com/install.sh | sh
+
+# 9. Install Open WebUI & Langflow in STRICTLY ISOLATED environments
+# This prevents them from destroying ComfyUI's fragile PyTorch dependencies.
+RUN python3 -m venv /app/venv_openwebui && \
+    /app/venv_openwebui/bin/pip install --no-cache-dir --upgrade pip && \
+    /app/venv_openwebui/bin/pip install --no-cache-dir open-webui
+
+RUN python3 -m venv /app/venv_langflow && \
+    /app/venv_langflow/bin/pip install --no-cache-dir --upgrade pip && \
+    /app/venv_langflow/bin/pip install --no-cache-dir langflow
+
+# 10. Reset directory and copy Sidecar
 WORKDIR /app
 COPY sidecar.py /app/sidecar.py
 COPY start.sh /app/start.sh
 
-# Make sure the script is allowed to execute
 RUN chmod +x /app/start.sh
 
-# 8. Expose BOTH ports so RunPod can see them
-EXPOSE 8188 8080
+# EXPOSE NEW PORTS: Comfy(8188), Sidecar(8080), OpenWebUI(8081), Langflow(7860)
+EXPOSE 8188 8080 8081 7860
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-# 9. Change the final command to run our dual-app launcher script!
 CMD ["/app/start.sh"]
