@@ -1,369 +1,265 @@
 import gradio as gr
-import os, subprocess, re, requests, shutil, json
+import os, subprocess, re, requests, shutil, json, time
 from urllib.parse import urlparse
 
-# --- CORRECTED PATHS FOR DOCKER ---
 COMFY_ROOT = "/app"
 COMFY_OUTPUT = os.path.join(COMFY_ROOT, "output")
 HISTORY_FILE = "/app/sidecar_history.json"
 TOKENS_FILE = "/app/tokens.txt"
-VENV_PIP = "pip" # We use global pip in the Docker container
+VENV_PIP = "pip"
 
 os.makedirs(COMFY_OUTPUT, exist_ok=True)
-
-# --- UTILS & AUTHENTICATION ---
 current_process = None
 cancel_requested = False
+tools_running = {}
 
+# --- APP HUB (LAUNCHERS) ---
+def launch_ollama_webui():
+    if tools_running.get("ollama"): return "✅ Ollama & Open WebUI already running!"
+    try:
+        subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        env = os.environ.copy()
+        env["PORT"] = "8081"; env["HOST"] = "0.0.0.0"
+        subprocess.Popen(["/app/venv_openwebui/bin/open-webui", "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        tools_running["ollama"] = True
+        return "🚀 SUCCESS! Connect to Port [8081]."
+    except Exception as e: return f"❌ Failed: {e}"
+
+def launch_langflow():
+    if tools_running.get("langflow"): return "✅ Langflow already running!"
+    try:
+        subprocess.Popen(["/app/venv_langflow/bin/python", "-m", "langflow", "run", "--host", "0.0.0.0", "--port", "7860"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        tools_running["langflow"] = True
+        return "🚀 SUCCESS! Connect to Port [7860]."
+    except Exception as e: return f"❌ Failed: {e}"
+
+def launch_vscode():
+    if tools_running.get("vscode"): return "✅ VS Code already running!"
+    try:
+        subprocess.Popen(["code-server", "--auth", "none", "--bind-addr", "0.0.0.0:8082", "/app"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        tools_running["vscode"] = True
+        return "🚀 SUCCESS! Connect to Port [8082]."
+    except Exception as e: return f"❌ Failed: {e}"
+
+def launch_kohya():
+    if tools_running.get("kohya"): return "✅ Kohya_ss already running!"
+    try:
+        subprocess.Popen(["/app/venv_kohya/bin/python", "kohya_gui.py", "--listen", "0.0.0.0", "--server_port", "28000", "--headless"], cwd="/app/kohya_ss", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        tools_running["kohya"] = True
+        return "🚀 SUCCESS! Connect to Port [28000]."
+    except Exception as e: return f"❌ Failed: {e}"
+
+def launch_tensorboard():
+    if tools_running.get("tensorboard"): return "✅ TensorBoard already running!"
+    try:
+        os.makedirs("/app/kohya_ss/logs", exist_ok=True)
+        subprocess.Popen(["tensorboard", "--logdir", "/app/kohya_ss/logs", "--host", "0.0.0.0", "--port", "6006"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        tools_running["tensorboard"] = True
+        return "🚀 SUCCESS! Connect to Port[6006]."
+    except Exception as e: return f"❌ Failed: {e}"
+
+# --- UTILS & SYNCER ---
 def get_tokens():
-    tokens = {
-        "HF": os.environ.get("HF_TOKEN"),
-        "CIVITAI": os.environ.get("CIVITAI_TOKEN")
-    }
+    tokens = {"HF": os.environ.get("HF_TOKEN"), "CIVITAI": os.environ.get("CIVITAI_TOKEN")}
     if os.path.exists(TOKENS_FILE):
         with open(TOKENS_FILE, "r") as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("HF_TOKEN=") and not tokens["HF"]:
-                    tokens["HF"] = line.split("=", 1)[1].strip()
-                elif line.startswith("CIVITAI_TOKEN=") and not tokens["CIVITAI"]:
-                    tokens["CIVITAI"] = line.split("=", 1)[1].strip()
+                if line.startswith("HF_TOKEN=") and not tokens["HF"]: tokens["HF"] = line.split("=", 1)[1].strip()
+                elif line.startswith("CIVITAI_TOKEN=") and not tokens["CIVITAI"]: tokens["CIVITAI"] = line.split("=", 1)[1].strip()
     return tokens
 
-def format_bytes(size_in_bytes):
-    if size_in_bytes < 1024**2: return f"{size_in_bytes / 1024:.1f} KB"
-    elif size_in_bytes < 1024**3: return f"{size_in_bytes / (1024**2):.1f} MB"
-    else: return f"{size_in_bytes / (1024**3):.2f} GB"
+def format_bytes(s): return f"{s/1024:.1f} KB" if s < 1024**2 else (f"{s/(1024**2):.1f} MB" if s < 1024**3 else f"{s/(1024**3):.2f} GB")
+def get_dir_size(p): return sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(p) for f in fs if not os.path.islink(os.path.join(d, f)))
 
-def get_dir_size(start_path):
-    total_size = 0
-    for dirpath, _, filenames in os.walk(start_path):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
-            if not os.path.islink(fp) and os.path.exists(fp):
-                total_size += os.path.getsize(fp)
-    return total_size
+def load_history(): return json.load(open(HISTORY_FILE)) if os.path.exists(HISTORY_FILE) else[]
+def save_history(h): json.dump(h, open(HISTORY_FILE, "w"), indent=4)
+def append_history(n, p, i, s):
+    h = [x for x in load_history() if x['path'] != p]
+    h.append({"name": n, "path": p, "is_node": i, "size": s})
+    save_history(h)
 
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r") as f: return json.load(f)
-        except: pass
-    return[]
-
-def save_history(history_list):
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history_list, f, indent=4)
-
-def append_history(name, path, is_node, size_str):
-    hist = load_history()
-    hist = [h for h in hist if h['path'] != path]
-    hist.append({"name": name, "path": path, "is_node": is_node, "size": size_str})
-    save_history(hist)
-
-# --- GENERATOR LOGIC ---
 def request_cancel():
     global cancel_requested, current_process
     cancel_requested = True
     if current_process:
         try: current_process.kill()
         except: pass
-    return "⚠️ Cancellation triggered! Killing active network processes..."
+    return "⚠️ Cancellation triggered!"
 
 def sync_generator(file_path):
     global cancel_requested, current_process
-    cancel_requested = False
-    current_process = None
-    auth_tokens = get_tokens()
+    cancel_requested = False; current_process = None; auth_tokens = get_tokens()
 
     if not file_path:
         yield "❌ Error: No file uploaded.", "No queue", gr.update()
         return
 
-    if hasattr(file_path, "name"): file_path = file_path.name
-
-    with open(file_path, "r") as f:
-        lines = f.readlines()
+    file_path = file_path.name if hasattr(file_path, "name") else file_path
+    with open(file_path, "r") as f: lines = f.readlines()
 
     tasks =[]
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#"): continue
-        
         url_match = re.match(r"^(https?://\S+)", line)
         if url_match:
             url = url_match.group(1)
             tag_match = re.search(r"\[([^'\]]+)\]", line[len(url):])
             name_match = re.search(r"\['([^']+)'\]", line[len(url):])
-            
             tag = tag_match.group(1).strip() if tag_match else "models/checkpoints"
             custom_name = name_match.group(1).strip() if name_match else None
-
+            
             if "github.com" in url or url.endswith(".git"):
                 url = url if url.endswith(".git") else url + ".git"
                 tasks.append({"url": url, "tag": "custom_nodes", "custom_name": None, "status": "pending", "size": "", "path": ""})
-            else:
-                tasks.append({"url": url, "tag": tag, "custom_name": custom_name, "status": "pending", "size": "", "path": ""})
+            else: tasks.append({"url": url, "tag": tag, "custom_name": custom_name, "status": "pending", "size": "", "path": ""})
 
-    def render_queue(current_idx=-1):
-        q_lines =[]
+    def render_queue(c=-1):
+        q = []
         for i, t in enumerate(tasks):
-            display_name = t['custom_name'] if t['custom_name'] else t['url'].rstrip('/').split('/')[-1].replace('.git', '')
-            icon = "⏳"
-            if t['status'] == "done": 
-                icon = "✅"
-                display_name += f"  💾 ({t['size']})"
-            elif t['status'] == "error": icon = "❌"
-            elif t['status'] == "cancelled": icon = "🛑"
-            elif i == current_idx: icon = "▶️"
-            q_lines.append(f"{icon} {i+1}. {display_name}")
-        return "\n".join(q_lines)
+            n = t['custom_name'] if t['custom_name'] else t['url'].rstrip('/').split('/')[-1].replace('.git', '')
+            icon = "✅" if t['status'] == "done" else ("❌" if t['status'] == "error" else ("🛑" if t['status'] == "cancelled" else ("▶️" if i == c else "⏳")))
+            q.append(f"{icon} {i+1}. {n} {f'({t['size']})' if t['size'] else ''}")
+        return "\n".join(q)
 
-    log_history =[]
-    def update_log(msg, replace_last=False):
-        if replace_last and log_history and log_history[-1].startswith("   ->"):
-            log_history[-1] = f"   -> {msg}"
-        else:
-            log_history.append(f"   -> {msg}" if replace_last else msg)
+    log_history = []
+    def log(m, r=False):
+        if r and log_history and log_history[-1].startswith("   ->"): log_history[-1] = f"   -> {m}"
+        else: log_history.append(f"   -> {m}" if r else m)
         return "\n".join(log_history[-20:])
 
-    if not tasks:
-        yield update_log("⚠️ No valid tasks found in text file."), "Empty", gr.update(value=None)
-        return
-
-    current_queue_ui = render_queue()
-    yield update_log(f"🔍 Found {len(tasks)} tasks. Starting Queue..."), current_queue_ui, gr.update()
+    if not tasks: yield log("⚠️ No tasks."), "Empty", gr.update(); return
+    yield log(f"🔍 Found {len(tasks)} tasks..."), render_queue(), gr.update()
 
     for i, task in enumerate(tasks):
         if cancel_requested: break
-
         url, tag, custom_name = task["url"], task["tag"], task["custom_name"]
-        current_queue_ui = render_queue(i)
-        yield update_log(f"\n--- Task {i+1} of {len(tasks)} ---"), current_queue_ui, gr.update()
+        q_ui = render_queue(i)
+        yield log(f"\n--- Task {i+1} of {len(tasks)} ---"), q_ui, gr.update()
 
-        if "custom_nodes" in tag or url.endswith(".git"):
+        if "custom_nodes" in tag:
             repo_name = url.rstrip('/').split('/')[-1].replace(".git", "")
             target_dir = os.path.join(COMFY_ROOT, "custom_nodes", repo_name)
-            
             if not os.path.exists(target_dir):
-                yield update_log(f"📦 Cloning Node: {repo_name}..."), current_queue_ui, gr.update()
+                yield log(f"📦 Cloning Node: {repo_name}..."), q_ui, gr.update()
                 try:
-                    current_process = subprocess.Popen(["git", "clone", "--depth", "1", url, target_dir], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    current_process = subprocess.Popen(["git", "clone", "--depth", "1", url, target_dir], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                     current_process.wait()
-                    if cancel_requested: 
-                        tasks[i]["status"] = "cancelled"
-                        continue
-                    if current_process.returncode != 0: raise Exception("Git clone failed.")
-                    
                     req_file = os.path.join(target_dir, "requirements.txt")
                     if os.path.exists(req_file):
-                        yield update_log(f"⚙️ Installing dependencies for {repo_name}..."), current_queue_ui, gr.update()
-                        current_process = subprocess.Popen([VENV_PIP, "install", "-r", req_file], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                        current_process.wait()
-
-                    if cancel_requested:
-                        tasks[i]["status"] = "cancelled"
-                        continue
-
+                        yield log(f"⚙️ Installing dependencies..."), q_ui, gr.update()
+                        subprocess.run(["sed", "-i", "-E", "/^(torch|torchvision|torchaudio|xformers)([^a-zA-Z0-9]|$)/d", req_file])
+                        subprocess.run([VENV_PIP, "install", "-r", req_file])
                     tasks[i]["status"] = "done"
-                    folder_size = format_bytes(get_dir_size(target_dir))
-                    tasks[i]["size"] = folder_size
-                    append_history(repo_name, target_dir, True, folder_size)
-                    
-                    current_queue_ui = render_queue(i)
-                    yield update_log(f"✅ Finished Node: {repo_name}"), current_queue_ui, gr.update()
+                    tasks[i]["size"] = format_bytes(get_dir_size(target_dir))
+                    append_history(repo_name, target_dir, True, tasks[i]["size"])
+                    yield log(f"✅ Finished Node: {repo_name}"), render_queue(i), gr.update()
                 except Exception as e:
                     tasks[i]["status"] = "error"
-                    current_queue_ui = render_queue(i)
-                    yield update_log(f"❌ Error processing {repo_name}: {str(e)}"), current_queue_ui, gr.update()
-                finally:
-                    current_process = None
+                    yield log(f"❌ Error: {str(e)}"), render_queue(i), gr.update()
             else:
-                tasks[i]["status"] = "done"
-                folder_size = format_bytes(get_dir_size(target_dir))
-                tasks[i]["size"] = folder_size
-                current_queue_ui = render_queue(i)
-                yield update_log(f"ℹ️ Node {repo_name} already exists. Skipping."), current_queue_ui, gr.update()
+                tasks[i]["status"] = "done"; tasks[i]["size"] = format_bytes(get_dir_size(target_dir))
+                yield log(f"ℹ️ Node exists."), render_queue(i), gr.update()
 
         else:
             dest_dir = os.path.join(COMFY_ROOT, tag)
             os.makedirs(dest_dir, exist_ok=True)
-            
-            file_name = custom_name if custom_name else os.path.basename(urlparse(url).path)
-            file_name = file_name.split("?")[0] 
+            file_name = custom_name if custom_name else os.path.basename(urlparse(url).path).split("?")[0]
             dest_file = os.path.join(dest_dir, file_name)
-            
-            yield update_log(f"⏳ Downloading Model: {file_name}..."), current_queue_ui, gr.update()
-            
+            yield log(f"⏳ Downloading: {file_name}..."), q_ui, gr.update()
+
             if "civitai.com" in url:
                 try:
-                    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-                    if auth_tokens["CIVITAI"] and "token=" not in url:
-                        join_char = "&" if "?" in url else "?"
-                        url = f"{url}{join_char}token={auth_tokens['CIVITAI']}"
-
-                    response = requests.get(url, stream=True, headers=headers, allow_redirects=True)
-                    response.raise_for_status()
-                    total_size = int(response.headers.get('content-length', 0))
-                    dl_size = 0
-                    
+                    h = {"User-Agent": "Mozilla/5.0"}
+                    if auth_tokens["CIVITAI"] and "token=" not in url: url += f"{'&' if '?' in url else '?'}token={auth_tokens['CIVITAI']}"
+                    resp = requests.get(url, stream=True, headers=h)
+                    resp.raise_for_status()
+                    total, dl = int(resp.headers.get('content-length', 0)), 0
                     with open(dest_file, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=1024*1024):
+                        for chunk in resp.iter_content(chunk_size=1048576):
                             if cancel_requested: break
                             if chunk:
-                                f.write(chunk)
-                                dl_size += len(chunk)
-                                if total_size > 0:
-                                    pct = int((dl_size / total_size) * 100)
-                                    prog_str = f"[{pct}% | {format_bytes(dl_size)} / {format_bytes(total_size)}]"
-                                    yield update_log(prog_str, replace_last=True), current_queue_ui, gr.update()
-                    
-                    if cancel_requested:
-                        if os.path.exists(dest_file): os.remove(dest_file)
-                        tasks[i]["status"] = "cancelled"
-                        continue
-
-                    tasks[i]["status"] = "done"
-                    tasks[i]["size"] = format_bytes(os.path.getsize(dest_file))
+                                f.write(chunk); dl += len(chunk)
+                                if total > 0: yield log(f"[{int((dl/total)*100)}% | {format_bytes(dl)} / {format_bytes(total)}]", True), q_ui, gr.update()
+                    if cancel_requested: tasks[i]["status"] = "cancelled"; continue
+                    tasks[i]["status"] = "done"; tasks[i]["size"] = format_bytes(os.path.getsize(dest_file))
                     append_history(file_name, dest_file, False, tasks[i]["size"])
-                    yield update_log("[100% | Download Complete]", replace_last=True), current_queue_ui, gr.update()
-                    yield update_log(f"✅ Successfully downloaded: {file_name}"), current_queue_ui, gr.update()
-
-                except Exception as e:
-                    tasks[i]["status"] = "error"
-                    current_queue_ui = render_queue(i)
-                    yield update_log(f"❌ Download error: {str(e)}"), current_queue_ui, gr.update()
-            
+                    yield log(f"✅ Downloaded!"), render_queue(i), gr.update()
+                except Exception as e: tasks[i]["status"] = "error"; yield log(f"❌ Error: {str(e)}"), render_queue(i), gr.update()
             else:
-                cmd =["aria2c", "--allow-overwrite=true", "--auto-file-renaming=false",
-                       "-x", "16", "-s", "16",
-                       "--console-log-level=warn", "--summary-interval=1",
-                       "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64)"]
-                if "huggingface.co" in url and auth_tokens["HF"]:
-                    cmd.append(f"--header=Authorization: Bearer {auth_tokens['HF']}")
-                cmd.extend(["-d", dest_dir, "-o", file_name, url])
-                
+                cmd =["aria2c", "--allow-overwrite=true", "--auto-file-renaming=false", "-x", "16", "-s", "16", "-d", dest_dir, "-o", file_name]
+                if "huggingface.co" in url and auth_tokens["HF"]: cmd.append(f"--header=Authorization: Bearer {auth_tokens['HF']}")
+                cmd.append(url)
                 try:
                     current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                    for output in current_process.stdout:
-                        if cancel_requested:
-                            current_process.kill()
-                            break
-
-                        output = output.strip()
-                        if not output: continue
-                        m = re.search(r"([\d\.]+[KMG]?iB)/([\d\.]+[KMG]?iB)\((\d+)%\)", output)
-                        if m:
-                            dl, total, pct = m.groups()
-                            prog_str = f"[{pct}% | {dl} / {total}]"
-                            yield update_log(prog_str, replace_last=True), current_queue_ui, gr.update()
-                        elif "error" in output.lower() or "exception" in output.lower():
-                            yield update_log(f"⚠️ {output}"), current_queue_ui, gr.update()
-                    
+                    for out in current_process.stdout:
+                        if cancel_requested: current_process.kill(); break
+                        m = re.search(r"([\d\.]+[KMG]?iB)/([\d\.]+[KMG]?iB)\((\d+)%\)", out.strip())
+                        if m: yield log(f"[{m.group(3)}% | {m.group(1)} / {m.group(2)}]", True), q_ui, gr.update()
                     current_process.wait()
-                    if cancel_requested:
-                        tasks[i]["status"] = "cancelled"
-                        continue
-                    
                     if current_process.returncode == 0:
-                        tasks[i]["status"] = "done"
-                        file_size = format_bytes(os.path.getsize(dest_file))
-                        tasks[i]["size"] = file_size
-                        append_history(file_name, dest_file, False, file_size)
+                        tasks[i]["status"] = "done"; tasks[i]["size"] = format_bytes(os.path.getsize(dest_file))
+                        append_history(file_name, dest_file, False, tasks[i]["size"])
+                        yield log(f"✅ Downloaded!"), render_queue(i), gr.update()
+                    else: tasks[i]["status"] = "error"; yield log(f"❌ Error Code {current_process.returncode}"), render_queue(i), gr.update()
+                except Exception as e: tasks[i]["status"] = "error"; yield log(f"❌ Error: {str(e)}"), render_queue(i), gr.update()
 
-                        current_queue_ui = render_queue(i)
-                        yield update_log("[100% | Download Complete]", replace_last=True), current_queue_ui, gr.update()
-                        yield update_log(f"✅ Successfully downloaded: {file_name}"), current_queue_ui, gr.update()
-                    else:
-                        tasks[i]["status"] = "error"
-                        current_queue_ui = render_queue(i)
-                        yield update_log(f"❌ Failed downloading: {file_name} (Code {current_process.returncode})"), current_queue_ui, gr.update()
-                        
-                except Exception as e:
-                    tasks[i]["status"] = "error"
-                    current_queue_ui = render_queue(i)
-                    yield update_log(f"❌ Download error: {str(e)}"), current_queue_ui, gr.update()
-                finally:
-                    current_process = None
+    yield log("🔄 Refreshing ComfyUI..."), render_queue(), gr.update(value=None)
+    try: requests.post("http://127.0.0.1:8188/api/refresh", timeout=5)
+    except: pass
 
-    if cancel_requested:
-        yield update_log("\n🛑 PROCESS CANCELLED BY USER."), render_queue(), gr.update(value=None)
-        return
+def refresh_hist(): return gr.update(choices=[f"{'📦 NODE' if h['is_node'] else '🗂️ MODEL'} | {h['name']} ({h['size']}) -> {h['path']}" for h in load_history() if os.path.exists(h['path'])])
+def del_files(sel):
+    l, h = [], load_history()
+    for s in (sel or[]):
+        p = s.split(" -> ")[-1].strip()
+        if os.path.exists(p): shutil.rmtree(p) if os.path.isdir(p) else os.remove(p); l.append(f"🗑️ Deleted: {p}")
+        h =[x for x in h if x['path'] != p]
+    save_history(h)
+    return "\n".join(l) if l else "⚠️ Nothing selected.", refresh_hist()
 
-    yield update_log("\n🔄 Refreshing ComfyUI Nodes..."), render_queue(), gr.update()
-    try:
-        requests.post("http://127.0.0.1:8188/api/refresh", timeout=5)
-        yield update_log("🚀 ALL TASKS COMPLETE. You can drop another file now!"), render_queue(), gr.update(value=None)
-    except Exception as e:
-        yield update_log(f"⚠️ ComfyUI is not responding to refresh ({str(e)})."), render_queue(), gr.update(value=None)
-
-def refresh_history_ui():
-    hist = load_history()
-    choices =[]
-    for h in hist:
-        if os.path.exists(h['path']):
-            tag = "📦 NODE" if h['is_node'] else "🗂️ MODEL"
-            choices.append(f"{tag} | {h['name']} ({h['size']}) -> {h['path']}")
-    return gr.update(choices=choices)
-
-def delete_selected_files(selected_strings):
-    if not selected_strings: return "⚠️ No files selected.", refresh_history_ui()
-    log, hist =[], load_history()
-    for item in selected_strings:
-        target_path = item.split(" -> ")[-1].strip()
-        if os.path.exists(target_path):
-            try:
-                if os.path.isdir(target_path): shutil.rmtree(target_path); log.append(f"🗑️ Deleted Node: {target_path}")
-                else: os.remove(target_path); log.append(f"🗑️ Deleted Model: {target_path}")
-            except Exception as e: log.append(f"❌ Failed to delete {target_path}: {e}")
-        else:
-            log.append(f"⚠️ Already removed: {target_path}")
-        hist =[h for h in hist if h['path'] != target_path]
-    save_history(hist)
-    return "\n".join(log), refresh_history_ui()
-
-def load_media(file_path):
-    if isinstance(file_path, list): file_path = file_path[0] if file_path else None
-    if not file_path or not isinstance(file_path, str) or not os.path.isfile(file_path):
-        return gr.update(value=None, visible=False), gr.update(value=None, visible=False)
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext in['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']:
-        return gr.update(value=file_path, visible=True), gr.update(value=None, visible=False)
-    elif ext in['.mp4', '.mkv', '.avi', '.webm']:
-        return gr.update(value=None, visible=False), gr.update(value=file_path, visible=True)
-    return gr.update(value=None, visible=False), gr.update(value=None, visible=False)
-
+# --- UI BUILDER ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# 🛰️ ComfyUI Universal Sidecar")
+    gr.Markdown("# 🛰️ ComfyUI Ultimate Sidecar")
     with gr.Tabs():
-        with gr.TabItem("📦 Downloader & Sync"):
-            gr.Markdown("**Nodes** (Raw URLs or `.git`) & **Models** (Direct URL with tags) | Auto-injects tokens.txt")
-            file_input = gr.File(label="1. Drop sync.txt or custom_nodes.txt here", file_types=[".txt"], type="filepath")
+        with gr.TabItem("📦 Sync & Download"):
+            f_in = gr.File(label="Drop sync.txt", file_types=[".txt"], type="filepath")
             with gr.Row():
-                start_btn = gr.Button("🚀 Start Sync", variant="primary")
-                cancel_btn = gr.Button("🛑 Cancel Sync", variant="stop")
-            queue_out = gr.Textbox(label="2. Download Queue & File Sizes", lines=8, interactive=False)
-            output_log = gr.Textbox(label="3. Live Execution Log", lines=12, interactive=False)
-            sync_event = start_btn.click(fn=sync_generator, inputs=file_input, outputs=[output_log, queue_out, file_input])
-            cancel_btn.click(fn=request_cancel, outputs=output_log, cancels=[sync_event])
+                btn_start = gr.Button("🚀 Start", variant="primary")
+                btn_cancel = gr.Button("🛑 Cancel", variant="stop")
+            q_out = gr.Textbox(label="Queue", lines=8); log_out = gr.Textbox(label="Log", lines=12)
+            sync_ev = btn_start.click(sync_generator, f_in, [log_out, q_out, f_in])
+            btn_cancel.click(request_cancel, None, log_out, cancels=[sync_ev])
 
-        with gr.TabItem("🖼️ Output Browser"):
-            gr.Markdown("Click on an image or video in the tree to view it. Hit 'Refresh' if new files were generated.")
+        with gr.TabItem("🗑️ File Manager"):
             with gr.Row():
-                with gr.Column(scale=1): file_exp = gr.FileExplorer(root_dir=COMFY_OUTPUT, label="Outputs", file_count="single", interactive=True)
-                with gr.Column(scale=2): img_viewer = gr.Image(label="Image Viewer", visible=False, interactive=False); vid_viewer = gr.Video(label="Video Viewer", visible=False, interactive=False)
-            file_exp.change(fn=load_media, inputs=file_exp, outputs=[img_viewer, vid_viewer])
+                btn_ref = gr.Button("🔄 Refresh"); btn_del = gr.Button("🧨 Delete", variant="stop")
+            cbg = gr.CheckboxGroup(label="Downloaded Items"); del_log = gr.Textbox(label="Log")
+            btn_ref.click(refresh_hist, None, cbg); btn_del.click(del_files, cbg,[del_log, cbg]); demo.load(refresh_hist, None, cbg)
 
-        with gr.TabItem("🗑️ History & Cleanup"):
-            gr.Markdown("Manage and delete downloaded files from the disk to free up cloud storage.")
+        with gr.TabItem("🛠️ Application Hub"):
+            gr.Markdown("Click to launch massive applications in the background. Access them instantly via the RunPod connect menu ports.")
             with gr.Row():
-                refresh_history_btn = gr.Button("🔄 Refresh List", variant="primary")
-                delete_btn = gr.Button("🧨 Delete Selected Files", variant="stop")
-            history_cbg = gr.CheckboxGroup(label="Downloaded Items (Models & Nodes)", choices=[])
-            delete_log = gr.Textbox(label="Cleanup Log", lines=6, interactive=False)
-            refresh_history_btn.click(fn=refresh_history_ui, outputs=history_cbg)
-            delete_btn.click(fn=delete_selected_files, inputs=history_cbg, outputs=[delete_log, history_cbg])
-            demo.load(fn=refresh_history_ui, outputs=history_cbg)
+                with gr.Column():
+                    b1 = gr.Button("🧠 Launch OpenWebUI & Ollama"); t1 = gr.Textbox(label="Status")
+                    b1.click(launch_ollama_webui, None, t1); gr.Markdown("*Runs locally on Port **8081**.*")
+                with gr.Column():
+                    b2 = gr.Button("⛓️ Launch Langflow"); t2 = gr.Textbox(label="Status")
+                    b2.click(launch_langflow, None, t2); gr.Markdown("*Runs locally on Port **7860**.*")
+                with gr.Column():
+                    b3 = gr.Button("💻 Launch VS Code"); t3 = gr.Textbox(label="Status")
+                    b3.click(launch_vscode, None, t3); gr.Markdown("*Runs locally on Port **8082**.*")
+            gr.Markdown("---")
+            with gr.Row():
+                with gr.Column():
+                    b4 = gr.Button("🔥 Launch Kohya_ss Trainer"); t4 = gr.Textbox(label="Status")
+                    b4.click(launch_kohya, None, t4); gr.Markdown("*Runs locally on Port **28000**.*")
+                with gr.Column():
+                    b5 = gr.Button("📊 Launch TensorBoard"); t5 = gr.Textbox(label="Status")
+                    b5.click(launch_tensorboard, None, t5); gr.Markdown("*Runs locally on Port **6006**.*")
+                with gr.Column():
+                    gr.Markdown("### 📂 Bulk FileBrowser\nFileBrowser is already running natively!\n\n*Click Connect to **Port 8083** on RunPod to mass-upload files.*")
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=8080)
