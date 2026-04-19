@@ -45,7 +45,7 @@ RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
     git clone https://github.com/11cafe/comfyui-workspace-manager.git && \
     git clone https://github.com/stavsap/comfyui-ollama.git && \
     git clone https://github.com/kijai/ComfyUI-Florence2.git
-    
+
 # 7. THE SHIELD: Safely install custom node requirements without breaking PyTorch 2.8!
 RUN for dir in /app/custom_nodes/*/ ; do \
         if [ -f "$dir/requirements.txt" ]; then \
@@ -63,10 +63,11 @@ RUN python3 -m venv /app/venv_langflow && \
 RUN python3 -m venv /app/venv_openwebui && \
     /app/venv_openwebui/bin/pip install --no-cache-dir open-webui
 # Kohya_ss (Using system-site-packages to safely borrow Torch without breaking it)
-RUN git clone --depth 1 https://github.com/bmaltais/kohya_ss.git /app/kohya_ss && \
+RUN git clone --recursive https://github.com/bmaltais/kohya_ss.git /app/kohya_ss && \
     python3 -m venv --system-site-packages /app/venv_kohya && \
-    sed -i -E '/^(torch|torchvision|torchaudio|xformers)([^a-zA-Z0-9]|$)/d' /app/kohya_ss/requirements_linux.txt && \
-    /app/venv_kohya/bin/pip install -r /app/kohya_ss/requirements_linux.txt
+    cd /app/kohya_ss && \
+    sed -i -E '/^(torch|torchvision|torchaudio|xformers)([^a-zA-Z0-9]|$)/d' requirements_linux.txt && \
+    /app/venv_kohya/bin/pip install -r requirements_linux.txt
 
 # 9. Final execution setup
 COPY sidecar.py /app/sidecar.py
