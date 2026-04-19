@@ -43,9 +43,9 @@ RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
     git clone https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git && \
     git clone https://github.com/city96/ComfyUI-GGUF.git && \
     git clone https://github.com/11cafe/comfyui-workspace-manager.git && \
-    git clone https://github.com/StartHua/ComfyUI-Ollama.git && \
+    git clone https://github.com/stavsap/comfyui-ollama.git && \
     git clone https://github.com/kijai/ComfyUI-Florence2.git
-
+    
 # 7. THE SHIELD: Safely install custom node requirements without breaking PyTorch 2.8!
 RUN for dir in /app/custom_nodes/*/ ; do \
         if [ -f "$dir/requirements.txt" ]; then \
