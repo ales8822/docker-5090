@@ -5,7 +5,7 @@ WORKDIR /app
 
 # 1. Install core system dependencies, downloaders, and Python venv capabilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git libgomp1 tini ffmpeg libgl1 libglib2.0-0 aria2 curl python3-venv \
+    build-essential git libgomp1 tini ffmpeg libgl1 libglib2.0-0 aria2 curl python3-venv python3-tk \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Install Binary Applications (FileBrowser, Code-Server, Ollama Daemon)
@@ -69,7 +69,7 @@ RUN git clone --recursive https://github.com/bmaltais/kohya_ss.git /app/kohya_ss
     sed -i -E '/^(torch|torchvision|torchaudio|xformers)([^a-zA-Z0-9]|$)/d' requirements_linux.txt requirements.txt && \
     sed -i -E 's/^(tensorflow|tensorboard)[^a-zA-Z0-9].*/\1/g' requirements_linux.txt requirements.txt && \
     /app/venv_kohya/bin/pip install -r requirements_linux.txt
-    
+
 # 9. Final execution setup
 COPY sidecar.py /app/sidecar.py
 COPY start.sh /app/start.sh

@@ -17,43 +17,44 @@ tools_running = {}
 def launch_ollama_webui():
     if tools_running.get("ollama"): return "✅ Ollama & Open WebUI already running!"
     try:
-        subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Removed DEVNULL so you can see the downloads in the RunPod logs
+        subprocess.Popen(["ollama", "serve"])
         env = os.environ.copy()
         env["PORT"] = "8081"; env["HOST"] = "0.0.0.0"
-        subprocess.Popen(["/app/venv_openwebui/bin/open-webui", "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["/app/venv_openwebui/bin/open-webui", "serve"], env=env)
         tools_running["ollama"] = True
-        return "🚀 SUCCESS! Connect to Port [8081]."
+        return "🚀 BOOTING! Open WebUI takes ~60 seconds to download its database on first launch. Please wait 1 minute before connecting to Port[8081]."
     except Exception as e: return f"❌ Failed: {e}"
 
 def launch_langflow():
     if tools_running.get("langflow"): return "✅ Langflow already running!"
     try:
-        subprocess.Popen(["/app/venv_langflow/bin/python", "-m", "langflow", "run", "--host", "0.0.0.0", "--port", "7860"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["/app/venv_langflow/bin/python", "-m", "langflow", "run", "--host", "0.0.0.0", "--port", "7860"])
         tools_running["langflow"] = True
-        return "🚀 SUCCESS! Connect to Port [7860]."
+        return "🚀 BOOTING! Please wait ~15 seconds, then Connect to Port [7860]."
     except Exception as e: return f"❌ Failed: {e}"
 
 def launch_vscode():
     if tools_running.get("vscode"): return "✅ VS Code already running!"
     try:
-        subprocess.Popen(["code-server", "--auth", "none", "--bind-addr", "0.0.0.0:8082", "/app"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["code-server", "--auth", "none", "--bind-addr", "0.0.0.0:8082", "/app"])
         tools_running["vscode"] = True
-        return "🚀 SUCCESS! Connect to Port [8082]."
+        return "🚀 SUCCESS! Connect to Port[8082]."
     except Exception as e: return f"❌ Failed: {e}"
 
 def launch_kohya():
     if tools_running.get("kohya"): return "✅ Kohya_ss already running!"
     try:
-        subprocess.Popen(["/app/venv_kohya/bin/python", "kohya_gui.py", "--listen", "0.0.0.0", "--server_port", "28000", "--headless"], cwd="/app/kohya_ss", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["/app/venv_kohya/bin/python", "kohya_gui.py", "--listen", "0.0.0.0", "--server_port", "28000", "--headless"], cwd="/app/kohya_ss")
         tools_running["kohya"] = True
-        return "🚀 SUCCESS! Connect to Port [28000]."
+        return "🚀 BOOTING! Kohya takes ~15 seconds to load. Connect to Port [28000]."
     except Exception as e: return f"❌ Failed: {e}"
 
 def launch_tensorboard():
     if tools_running.get("tensorboard"): return "✅ TensorBoard already running!"
     try:
         os.makedirs("/app/kohya_ss/logs", exist_ok=True)
-        subprocess.Popen(["tensorboard", "--logdir", "/app/kohya_ss/logs", "--host", "0.0.0.0", "--port", "6006"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["tensorboard", "--logdir", "/app/kohya_ss/logs", "--host", "0.0.0.0", "--port", "6006"])
         tools_running["tensorboard"] = True
         return "🚀 SUCCESS! Connect to Port[6006]."
     except Exception as e: return f"❌ Failed: {e}"
