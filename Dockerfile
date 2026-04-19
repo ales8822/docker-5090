@@ -66,9 +66,10 @@ RUN python3 -m venv /app/venv_openwebui && \
 RUN git clone --recursive https://github.com/bmaltais/kohya_ss.git /app/kohya_ss && \
     python3 -m venv --system-site-packages /app/venv_kohya && \
     cd /app/kohya_ss && \
-    sed -i -E '/^(torch|torchvision|torchaudio|xformers)([^a-zA-Z0-9]|$)/d' requirements_linux.txt && \
+    sed -i -E '/^(torch|torchvision|torchaudio|xformers)([^a-zA-Z0-9]|$)/d' requirements_linux.txt requirements.txt && \
+    sed -i -E 's/^(tensorflow|tensorboard)[^a-zA-Z0-9].*/\1/g' requirements_linux.txt requirements.txt && \
     /app/venv_kohya/bin/pip install -r requirements_linux.txt
-
+    
 # 9. Final execution setup
 COPY sidecar.py /app/sidecar.py
 COPY start.sh /app/start.sh
