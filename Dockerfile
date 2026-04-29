@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# Switched to CUDA 12.4 and PyTorch 2.6.0 for maximum Community Node compatibility
-FROM runpod/pytorch:1.0.2-cu124-torch260-ubuntu2404
+# CORRECTED: The official RunPod base image for CUDA 12.4 and PyTorch 2.4.0
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 WORKDIR /app
 
@@ -28,9 +28,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 
-# 5. Install Performance Extensions (Switched to Kijai's PyTorch 2.6 Flash Attention Wheel)
-RUN pip install --no-cache-dir https://huggingface.co/Kijai/PrecompiledWheels/resolve/main/flash_attn-2.7.4.post1-cp312-cp312-linux_x86_64.whl
-RUN pip install --no-cache-dir https://huggingface.co/Kijai/PrecompiledWheels/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
+# 5. Install Performance Extensions (Switched to Python 3.11 Wheels for PyTorch 2.4!)
+RUN pip install --no-cache-dir https://huggingface.co/strangertoolshf/flash_attention_2_wheelhouse/resolve/main/wheelhouse-flash_attn-2.8.3/linux_x86_64/torch2.4/cu12/abiFALSE/cp311/flash_attn-2.8.3+cu12torch2.4cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+RUN pip install --no-cache-dir https://huggingface.co/ModelsLab/Sage_2_plus_plus_build/resolve/main/sageattention-2.2.0-cp311-cp311-linux_x86_64.whl
 
 # 6. Clone Custom Nodes
 WORKDIR /app/custom_nodes
@@ -50,7 +50,7 @@ RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
 
 # 7. THE SHIELD
 RUN for dir in /app/custom_nodes/*/ ; do \
-        if [ -f "$dir/requirements.txt" ]; then \
+        if[ -f "$dir/requirements.txt" ]; then \
             sed -i -E '/^(torch|torchvision|torchaudio|xformers)([^a-zA-Z0-9]|$)/d' "$dir/requirements.txt"; \
             pip install --no-cache-dir -r "$dir/requirements.txt"; \
         fi; \
