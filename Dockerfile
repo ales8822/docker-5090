@@ -78,5 +78,5 @@ RUN chmod +x /app/start.sh
 
 EXPOSE 8188 8080 8081 7860 8082 8083 28000 6006
 
-ENTRYPOINT["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/app/start.sh"]
