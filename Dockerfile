@@ -13,7 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 2. Install Binary Applications (FileBrowser, Code-Server, Ollama Daemon)
 RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash && \
     curl -fsSL https://code-server.dev/install.sh | sh && \
-    curl -fsSL https://ollama.com/install.sh | sh
+    curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama.tgz && \
+    tar -C /usr -xzf ollama.tgz && \
+    rm ollama.tgz
 
 # 3. Clone ComfyUI
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git .
