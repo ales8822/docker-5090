@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
-FROM runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
+
+# Switched to CUDA 12.4 and PyTorch 2.6.0 for maximum Community Node compatibility
+FROM runpod/pytorch:1.0.2-cu124-torch260-ubuntu2404
 
 WORKDIR /app
 
@@ -16,7 +18,7 @@ RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh |
 # 3. Clone ComfyUI
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git .
 
-# 4. Install Global Core Dependencies (Added TensorBoard for tracking)
+# 4. Install Global Core Dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir Cython && \
     pip install --no-cache-dir -r requirements.txt && \
@@ -26,11 +28,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 
-# 5. Install Performance Extensions (Flash/Sage Attention optimized for 5090)
-RUN pip install --no-cache-dir https://huggingface.co/strangertoolshf/flash_attention_2_wheelhouse/resolve/main/wheelhouse-flash_attn-2.8.3/linux_x86_64/torch2.8/cu12/abiFALSE/cp312/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
+# 5. Install Performance Extensions (Switched to Kijai's PyTorch 2.6 Flash Attention Wheel)
+RUN pip install --no-cache-dir https://huggingface.co/Kijai/PrecompiledWheels/resolve/main/flash_attn-2.7.4.post1-cp312-cp312-linux_x86_64.whl
 RUN pip install --no-cache-dir https://huggingface.co/Kijai/PrecompiledWheels/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
 
-# 6. Clone Custom Nodes (Including Ollama integration and Florence2 for auto-captioning!)
+# 6. Clone Custom Nodes
 WORKDIR /app/custom_nodes
 RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
     git clone https://github.com/civitai/civitai_comfy_nodes.git && \
@@ -46,7 +48,7 @@ RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
     git clone https://github.com/stavsap/comfyui-ollama.git && \
     git clone https://github.com/kijai/ComfyUI-Florence2.git
 
-# 7. THE SHIELD: Safely install custom node requirements without breaking PyTorch 2.8!
+# 7. THE SHIELD
 RUN for dir in /app/custom_nodes/*/ ; do \
         if [ -f "$dir/requirements.txt" ]; then \
             sed -i -E '/^(torch|torchvision|torchaudio|xformers)([^a-zA-Z0-9]|$)/d' "$dir/requirements.txt"; \
@@ -54,15 +56,14 @@ RUN for dir in /app/custom_nodes/*/ ; do \
         fi; \
     done
 
-# 8. THE QUARANTINE ZONES: Install heavy apps in isolated environments
+# 8. THE QUARANTINE ZONES
 WORKDIR /app
-# Langflow
 RUN python3 -m venv /app/venv_langflow && \
     /app/venv_langflow/bin/pip install --no-cache-dir langflow
-# OpenWebUI
+
 RUN python3 -m venv /app/venv_openwebui && \
     /app/venv_openwebui/bin/pip install --no-cache-dir open-webui
-# Kohya_ss (Using system-site-packages to safely borrow Torch without breaking it)
+
 RUN git clone --recursive https://github.com/bmaltais/kohya_ss.git /app/kohya_ss && \
     python3 -m venv --system-site-packages /app/venv_kohya && \
     cd /app/kohya_ss && \
@@ -75,8 +76,7 @@ COPY sidecar.py /app/sidecar.py
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Open ALL the ports
 EXPOSE 8188 8080 8081 7860 8082 8083 28000 6006
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT["/usr/bin/tini", "--"]
 CMD ["/app/start.sh"]
